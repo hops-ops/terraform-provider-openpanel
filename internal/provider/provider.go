@@ -197,6 +197,7 @@ func buildAuthorizer(data OpenPanelProviderModel) (client.Authorizer, error) {
 
 func (p *OpenPanelProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewOrganizationResource,
 		NewProjectResource,
 		NewClientResource,
 		NewReferenceResource,

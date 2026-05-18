@@ -129,7 +129,18 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 
 	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
+		// /manage controllers consistently wrap successful responses in
+		// `{ "data": ... }`; unwrap to the caller's expected shape.
+		// `{ "success": true }` from DELETE is fine — `out` is typically
+		// nil for those so we never decode it.
+		var envelope struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(respBody, &envelope); err == nil && len(envelope.Data) > 0 {
+			if err := json.Unmarshal(envelope.Data, out); err != nil {
+				return fmt.Errorf("decode response body (data envelope): %w", err)
+			}
+		} else if err := json.Unmarshal(respBody, out); err != nil {
 			return fmt.Errorf("decode response body: %w", err)
 		}
 	}
@@ -138,18 +149,69 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 // ---------------------------------------------------------------------
+// Organizations
+// ---------------------------------------------------------------------
+
+// Organization mirrors the OpenPanel organization shape returned by
+// /manage/organizations. Requires the upstream JWT-admin-auth feature
+// (Openpanel-dev/openpanel#371) — the endpoints don't exist on stock
+// upstream as of 2026-05-18.
+type Organization struct {
+	ID        string  `json:"id,omitempty"`
+	Name      string  `json:"name"`
+	Timezone  *string `json:"timezone,omitempty"`
+	CreatedAt string  `json:"createdAt,omitempty"`
+	UpdatedAt string  `json:"updatedAt,omitempty"`
+}
+
+func (c *Client) CreateOrganization(ctx context.Context, o *Organization) (*Organization, error) {
+	var out Organization
+	if err := c.do(ctx, http.MethodPost, "/organizations", o, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) GetOrganization(ctx context.Context, id string) (*Organization, error) {
+	var out Organization
+	if err := c.do(ctx, http.MethodGet, "/organizations/"+id, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) UpdateOrganization(ctx context.Context, id string, o *Organization) (*Organization, error) {
+	var out Organization
+	if err := c.do(ctx, http.MethodPatch, "/organizations/"+id, o, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteOrganization(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/organizations/"+id, nil, nil)
+}
+
+// ---------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------
 
 // Project mirrors the OpenPanel project shape returned by /manage/projects.
+//
+// CORS is an array of allowed origins (matches the zod schema upstream:
+// `cors: z.array(z.string()).default([])`). Send `null` to leave unset
+// or `[]` to clear.
 type Project struct {
-	ID             string  `json:"id,omitempty"`
-	OrganizationID string  `json:"organizationId,omitempty"`
-	Name           string  `json:"name"`
-	Domain         *string `json:"domain,omitempty"`
-	CORS           *string `json:"cors,omitempty"`
-	CreatedAt      string  `json:"createdAt,omitempty"`
-	UpdatedAt      string  `json:"updatedAt,omitempty"`
+	ID             string   `json:"id,omitempty"`
+	OrganizationID string   `json:"organizationId,omitempty"`
+	Name           string   `json:"name"`
+	Domain         *string  `json:"domain,omitempty"`
+	// `omitempty` so an unset CORS doesn't serialize as JSON `null`
+	// (the OpenPanel zod schema rejects null). Send an explicit
+	// `[]string{}` value to clear.
+	CORS      []string `json:"cors,omitempty"`
+	CreatedAt string   `json:"createdAt,omitempty"`
+	UpdatedAt string   `json:"updatedAt,omitempty"`
 }
 
 func (c *Client) CreateProject(ctx context.Context, p *Project) (*Project, error) {
@@ -206,7 +268,7 @@ type SDKClient struct {
 	Name      string     `json:"name"`
 	ProjectID string     `json:"projectId"`
 	Type      ClientType `json:"type"`
-	CORS      *string    `json:"cors,omitempty"`
+	CORS      []string   `json:"cors,omitempty"`
 	Secret    *string    `json:"secret,omitempty"` // sec_* — Create-time only
 	CreatedAt string     `json:"createdAt,omitempty"`
 	UpdatedAt string     `json:"updatedAt,omitempty"`
@@ -246,14 +308,51 @@ func (c *Client) DeleteClient(ctx context.Context, id string) error {
 
 // Reference annotates an event in the analytics timeline (e.g. a deploy,
 // a marketing campaign launch). Mirrors /manage/references.
+//
+// Asymmetry between request and response upstream:
+//   - the API request body expects `datetime` (zod schema)
+//   - the response body / GET / Prisma model uses `date`
+// Both JSON tags are mapped to the same Go field so the round-trip works.
 type Reference struct {
 	ID          string  `json:"id,omitempty"`
 	ProjectID   string  `json:"projectId"`
 	Title       string  `json:"title"`
 	Description *string `json:"description,omitempty"`
-	Date        string  `json:"date"` // RFC 3339
-	CreatedAt   string  `json:"createdAt,omitempty"`
-	UpdatedAt   string  `json:"updatedAt,omitempty"`
+	// On write: serialized as `datetime`. On read: populated from `date`.
+	// The custom (Un)Marshal below handles the asymmetry.
+	Datetime  string `json:"-"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+// MarshalJSON serializes Datetime to `datetime` (request shape).
+func (r Reference) MarshalJSON() ([]byte, error) {
+	type Alias Reference
+	return json.Marshal(struct {
+		Alias
+		Datetime string `json:"datetime,omitempty"`
+	}{Alias: Alias(r), Datetime: r.Datetime})
+}
+
+// UnmarshalJSON reads `date` (response shape) into Datetime.
+func (r *Reference) UnmarshalJSON(data []byte) error {
+	type Alias Reference
+	aux := struct {
+		*Alias
+		Date     string `json:"date,omitempty"`
+		Datetime string `json:"datetime,omitempty"`
+	}{Alias: (*Alias)(r)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	// Prefer `date` (the response field). Fallback to `datetime` so
+	// re-marshalling our own writes still works.
+	if aux.Date != "" {
+		r.Datetime = aux.Date
+	} else if aux.Datetime != "" {
+		r.Datetime = aux.Datetime
+	}
+	return nil
 }
 
 func (c *Client) CreateReference(ctx context.Context, r *Reference) (*Reference, error) {

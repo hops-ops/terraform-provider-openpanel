@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -37,7 +38,7 @@ type ProjectResourceModel struct {
 	OrganizationID types.String `tfsdk:"organization_id"`
 	Name           types.String `tfsdk:"name"`
 	Domain         types.String `tfsdk:"domain"`
-	CORS           types.String `tfsdk:"cors"`
+	CORS           types.List   `tfsdk:"cors"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
 }
@@ -72,9 +73,11 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Primary site domain associated with the Project. Optional metadata.",
 				Optional:            true,
 			},
-			"cors": schema.StringAttribute{
-				MarkdownDescription: "Space-separated list of allowed origins for the Project's write clients (the JS SDK CORS allowlist).",
+			"cors": schema.ListAttribute{
+				MarkdownDescription: "List of allowed origins for the Project's write clients (the JS SDK CORS allowlist).",
 				Optional:            true,
+				Computed:            true,
+				ElementType:         types.StringType,
 			},
 			"created_at": schema.StringAttribute{
 				MarkdownDescription: "RFC 3339 timestamp.",
@@ -111,7 +114,7 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 	in := &client.Project{
 		Name:   plan.Name.ValueString(),
 		Domain: stringPtrOrNil(plan.Domain),
-		CORS:   stringPtrOrNil(plan.CORS),
+		CORS:   listToStrings(ctx, plan.CORS),
 	}
 
 	out, err := r.client.CreateProject(ctx, in)
@@ -153,7 +156,7 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 	in := &client.Project{
 		Name:   plan.Name.ValueString(),
 		Domain: stringPtrOrNil(plan.Domain),
-		CORS:   stringPtrOrNil(plan.CORS),
+		CORS:   listToStrings(ctx, plan.CORS),
 	}
 
 	out, err := r.client.UpdateProject(ctx, plan.ID.ValueString(), in)
@@ -190,10 +193,36 @@ func projectToModel(p *client.Project) *ProjectResourceModel {
 		OrganizationID: types.StringValue(p.OrganizationID),
 		Name:           types.StringValue(p.Name),
 		Domain:         stringValueOrNull(p.Domain),
-		CORS:           stringValueOrNull(p.CORS),
+		CORS:           stringsToList(p.CORS),
 		CreatedAt:      types.StringValue(p.CreatedAt),
 		UpdatedAt:      types.StringValue(p.UpdatedAt),
 	}
+}
+
+// listToStrings extracts a Go []string from a types.List of types.StringType.
+// Returns nil when the list is null/unknown.
+func listToStrings(ctx context.Context, l types.List) []string {
+	if l.IsNull() || l.IsUnknown() {
+		return nil
+	}
+	var out []string
+	_ = l.ElementsAs(ctx, &out, false)
+	return out
+}
+
+// stringsToList converts a Go []string to a types.List of strings.
+// `nil` becomes an empty list rather than null to match what OpenPanel
+// returns when no CORS origins are configured.
+func stringsToList(ss []string) types.List {
+	if ss == nil {
+		ss = []string{}
+	}
+	vals := make([]attr.Value, len(ss))
+	for i, s := range ss {
+		vals[i] = types.StringValue(s)
+	}
+	l, _ := types.ListValue(types.StringType, vals)
+	return l
 }
 
 func stringPtrOrNil(v types.String) *string {

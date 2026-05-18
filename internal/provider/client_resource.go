@@ -38,7 +38,7 @@ type ClientResourceModel struct {
 	ProjectID types.String `tfsdk:"project_id"`
 	Name      types.String `tfsdk:"name"`
 	Type      types.String `tfsdk:"type"`
-	CORS      types.String `tfsdk:"cors"`
+	CORS      types.List   `tfsdk:"cors"`
 	Secret    types.String `tfsdk:"secret"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
@@ -77,9 +77,11 @@ func (r *ClientResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"cors": schema.StringAttribute{
-				MarkdownDescription: "Space-separated allowed origins (write clients only).",
+			"cors": schema.ListAttribute{
+				MarkdownDescription: "List of allowed origins (write clients only).",
 				Optional:            true,
+				Computed:            true,
+				ElementType:         types.StringType,
 			},
 			"secret": schema.StringAttribute{
 				MarkdownDescription: "The `sec_*` secret. Populated only at create-time; subsequent reads return null.",
@@ -123,7 +125,7 @@ func (r *ClientResource) Create(ctx context.Context, req resource.CreateRequest,
 		Name:      plan.Name.ValueString(),
 		ProjectID: plan.ProjectID.ValueString(),
 		Type:      client.ClientType(plan.Type.ValueString()),
-		CORS:      stringPtrOrNil(plan.CORS),
+		CORS:      listToStrings(ctx, plan.CORS),
 	}
 
 	out, err := r.client.CreateClient(ctx, in)
@@ -178,7 +180,7 @@ func (r *ClientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		Name:      plan.Name.ValueString(),
 		ProjectID: plan.ProjectID.ValueString(),
 		Type:      client.ClientType(plan.Type.ValueString()),
-		CORS:      stringPtrOrNil(plan.CORS),
+		CORS:      listToStrings(ctx, plan.CORS),
 	}
 
 	out, err := r.client.UpdateClient(ctx, plan.ID.ValueString(), in)
@@ -222,7 +224,7 @@ func clientToModel(c *client.SDKClient) *ClientResourceModel {
 		ProjectID: types.StringValue(c.ProjectID),
 		Name:      types.StringValue(c.Name),
 		Type:      types.StringValue(string(c.Type)),
-		CORS:      stringValueOrNull(c.CORS),
+		CORS:      stringsToList(c.CORS),
 		Secret:    types.StringNull(),
 		CreatedAt: types.StringValue(c.CreatedAt),
 		UpdatedAt: types.StringValue(c.UpdatedAt),

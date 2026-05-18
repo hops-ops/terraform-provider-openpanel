@@ -107,7 +107,7 @@ func (r *ReferenceResource) Create(ctx context.Context, req resource.CreateReque
 		ProjectID:   plan.ProjectID.ValueString(),
 		Title:       plan.Title.ValueString(),
 		Description: stringPtrOrNil(plan.Description),
-		Date:        plan.Date.ValueString(),
+		Datetime:    plan.Date.ValueString(),
 	}
 
 	out, err := r.client.CreateReference(ctx, in)
@@ -150,7 +150,7 @@ func (r *ReferenceResource) Update(ctx context.Context, req resource.UpdateReque
 		ProjectID:   plan.ProjectID.ValueString(),
 		Title:       plan.Title.ValueString(),
 		Description: stringPtrOrNil(plan.Description),
-		Date:        plan.Date.ValueString(),
+		Datetime:    plan.Date.ValueString(),
 	}
 
 	out, err := r.client.UpdateReference(ctx, plan.ID.ValueString(), in)
@@ -187,7 +187,7 @@ func referenceToModel(r *client.Reference) *ReferenceResourceModel {
 		ProjectID:   types.StringValue(r.ProjectID),
 		Title:       types.StringValue(r.Title),
 		Description: stringValueOrNull(r.Description),
-		Date:        types.StringValue(r.Date),
+		Date:        types.StringValue(r.Datetime),
 		CreatedAt:   types.StringValue(r.CreatedAt),
 		UpdatedAt:   types.StringValue(r.UpdatedAt),
 	}
