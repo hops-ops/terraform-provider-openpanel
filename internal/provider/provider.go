@@ -25,21 +25,21 @@ var _ provider.Provider = &OpenPanelProvider{}
 //
 // Three authentication modes are supported (any one required):
 //
-//   1. Client-pair  — root-typed Client ID + Secret. The existing
-//                     OpenPanel /manage auth; works against any
-//                     OpenPanel install once you've minted a root
-//                     Client through the dashboard.
+//  1. Client-pair  — root-typed Client ID + Secret. The existing
+//     OpenPanel /manage auth; works against any
+//     OpenPanel install once you've minted a root
+//     Client through the dashboard.
 //
-//   2. OIDC client_credentials — the provider runs the OAuth2
-//                     client_credentials grant against the configured
-//                     issuer, caches the JWT, refreshes on expiry.
-//                     Requires the openpanel-app fork (or any future
-//                     upstream release) configured with
-//                     ADMIN_OIDC_ISSUER on the api pod.
+//  2. OIDC client_credentials — the provider runs the OAuth2
+//     client_credentials grant against the configured
+//     issuer, caches the JWT, refreshes on expiry.
+//     Requires the openpanel-app fork (or any future
+//     upstream release) configured with
+//     ADMIN_OIDC_ISSUER on the api pod.
 //
-//   3. Static Bearer  — operator supplies a pre-obtained JWT (e.g.
-//                     from another tool / a secret file). The
-//                     provider passes it through unchanged.
+//  3. Static Bearer  — operator supplies a pre-obtained JWT (e.g.
+//     from another tool / a secret file). The
+//     provider passes it through unchanged.
 type OpenPanelProvider struct {
 	// version is set to the provider version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running

@@ -202,10 +202,10 @@ func (c *Client) DeleteOrganization(ctx context.Context, id string) error {
 // `cors: z.array(z.string()).default([])`). Send `null` to leave unset
 // or `[]` to clear.
 type Project struct {
-	ID             string   `json:"id,omitempty"`
-	OrganizationID string   `json:"organizationId,omitempty"`
-	Name           string   `json:"name"`
-	Domain         *string  `json:"domain,omitempty"`
+	ID             string  `json:"id,omitempty"`
+	OrganizationID string  `json:"organizationId,omitempty"`
+	Name           string  `json:"name"`
+	Domain         *string `json:"domain,omitempty"`
 	// `omitempty` so an unset CORS doesn't serialize as JSON `null`
 	// (the OpenPanel zod schema rejects null). Send an explicit
 	// `[]string{}` value to clear.
@@ -312,6 +312,7 @@ func (c *Client) DeleteClient(ctx context.Context, id string) error {
 // Asymmetry between request and response upstream:
 //   - the API request body expects `datetime` (zod schema)
 //   - the response body / GET / Prisma model uses `date`
+//
 // Both JSON tags are mapped to the same Go field so the round-trip works.
 type Reference struct {
 	ID          string  `json:"id,omitempty"`
