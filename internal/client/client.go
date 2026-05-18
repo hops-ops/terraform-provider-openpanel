@@ -193,6 +193,63 @@ func (c *Client) DeleteOrganization(ctx context.Context, id string) error {
 }
 
 // ---------------------------------------------------------------------
+// Organization SSO config (per-org OIDC)
+//
+// 1:1 with Organization. The encrypted client_secret is stored on the
+// server side; this client sends cleartext on PUT and the server
+// never returns the secret on GET.
+// ---------------------------------------------------------------------
+
+// OrgSsoConfig mirrors the /manage/organizations/:id/sso shape. All
+// fields except Provider and DisplayName are optional on update so
+// the same struct serves both PUT (create + update) and the GET
+// response.
+//
+// `OidcClientSecret` is write-only: PUT requests carry the cleartext
+// value; GET responses leave it empty and report presence via
+// `HasOidcClientSecret`.
+type OrgSsoConfig struct {
+	ID                        string   `json:"id,omitempty"`
+	OrganizationID            string   `json:"organizationId,omitempty"`
+	Provider                  string   `json:"provider,omitempty"`
+	DisplayName               string   `json:"displayName,omitempty"`
+	OidcClientID              string   `json:"oidcClientId,omitempty"`
+	OidcClientSecret          string   `json:"oidcClientSecret,omitempty"`
+	OidcAuthorizationEndpoint string   `json:"oidcAuthorizationEndpoint,omitempty"`
+	OidcTokenEndpoint         string   `json:"oidcTokenEndpoint,omitempty"`
+	OidcJwksUri               string   `json:"oidcJwksUri,omitempty"`
+	EnforcedForDomains        []string `json:"enforcedForDomains,omitempty"`
+	IsRequired                bool     `json:"isRequired,omitempty"`
+	HasOidcClientSecret       bool     `json:"hasOidcClientSecret,omitempty"`
+	CreatedAt                 string   `json:"createdAt,omitempty"`
+	UpdatedAt                 string   `json:"updatedAt,omitempty"`
+}
+
+func (c *Client) GetOrgSsoConfig(ctx context.Context, organizationID string) (*OrgSsoConfig, error) {
+	var out OrgSsoConfig
+	if err := c.do(ctx, http.MethodGet, "/organizations/"+organizationID+"/sso", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpsertOrgSsoConfig creates the row when it doesn't exist; updates it
+// otherwise. The server enforces required fields on first create.
+// Pass an empty `OidcClientSecret` on update to leave the existing
+// encrypted blob in place.
+func (c *Client) UpsertOrgSsoConfig(ctx context.Context, organizationID string, cfg *OrgSsoConfig) (*OrgSsoConfig, error) {
+	var out OrgSsoConfig
+	if err := c.do(ctx, http.MethodPut, "/organizations/"+organizationID+"/sso", cfg, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteOrgSsoConfig(ctx context.Context, organizationID string) error {
+	return c.do(ctx, http.MethodDelete, "/organizations/"+organizationID+"/sso", nil, nil)
+}
+
+// ---------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------
 
