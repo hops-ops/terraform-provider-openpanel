@@ -1,64 +1,236 @@
-# Terraform Provider Scaffolding (Terraform Plugin Framework)
+# Terraform Provider: OpenPanel
 
-_This template repository is built on the [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework). The template repository built on the [Terraform Plugin SDK](https://github.com/hashicorp/terraform-plugin-sdk) can be found at [terraform-provider-scaffolding](https://github.com/hashicorp/terraform-provider-scaffolding). See [Which SDK Should I Use?](https://developer.hashicorp.com/terraform/plugin/framework-benefits) in the Terraform documentation for additional information._
+A Terraform provider for [OpenPanel](https://openpanel.dev) — the
+self-hosted, open-source product analytics platform. Manages OpenPanel
+**Organizations**, **Projects**, **Clients**, and **References** via
+the `/manage` REST API.
 
-This repository is a *template* for a [Terraform](https://www.terraform.io) provider. It is intended as a starting point for creating Terraform providers, containing:
+Use this provider to:
 
-- A resource and a data source (`internal/provider/`),
-- Examples (`examples/`) and generated documentation (`docs/`),
-- Miscellaneous meta files.
+- Declaratively provision per-tenant Organizations and Projects from
+  CI / pull-requests rather than the OpenPanel dashboard.
+- Wire OpenPanel into a Crossplane-managed platform: this provider is
+  the upstream for [`provider-upjet-openpanel`][upjet], the Crossplane
+  provider generated from it.
+- Mint ingest-only Client credentials per environment from the same
+  IaC tree that defines your apps.
 
-These files contain boilerplate code that you will need to edit to create your own Terraform provider. Tutorials for creating Terraform providers can be found on the [HashiCorp Developer](https://developer.hashicorp.com/terraform/tutorials/providers-plugin-framework) platform. _Terraform Plugin Framework specific guides are titled accordingly._
+[upjet]: https://github.com/hops-ops/provider-upjet-openpanel
 
-Please see the [GitHub template repository documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template) for how to create a new repository from this template on GitHub.
+## Status
 
-Once you've written your provider, you'll want to [publish it on the Terraform Registry](https://developer.hashicorp.com/terraform/registry/providers/publishing) so that others can use it.
+| | |
+|---|---|
+| Tracks OpenPanel | [`hops-ops/openpanel-app`](https://github.com/hops-ops/openpanel-app) fork (admin-JWT auth + `/manage/organizations` endpoints; both pending upstream as [openpanel-dev/openpanel#371](https://github.com/openpanel-dev/openpanel/pull/371)) |
+| Auth modes | Client-pair (any OpenPanel install), OIDC `client_credentials`, static Bearer |
+| Latest release | See [Releases](https://github.com/hops-ops/terraform-provider-openpanel/releases) |
 
-## Requirements
+> The provider speaks the standard `/manage` REST API for Projects,
+> Clients, and References (available in upstream OpenPanel since
+> 2026-01-20). The Organizations resource and the OIDC + Bearer auth
+> modes require the hops-ops fork's admin-JWT middleware until that
+> patch lands upstream.
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.24
+## Installing
 
-## Building the Provider
+### From the Terraform Registry
 
-1. Clone the repository
-1. Enter the repository directory
-1. Build the provider using the Go `install` command:
+```hcl
+terraform {
+  required_providers {
+    openpanel = {
+      source  = "hops-ops/openpanel"
+      version = "~> 0.1"
+    }
+  }
+}
+```
+
+### Locally (for development)
+
+Set up [`dev_overrides`][dev-overrides] in `~/.terraformrc`:
+
+```hcl
+provider_installation {
+  dev_overrides {
+    "hops-ops/openpanel" = "/path/to/your/$GOPATH/bin"
+  }
+  direct {}
+}
+```
+
+Then `go install` from a clone of this repo.
+
+[dev-overrides]: https://developer.hashicorp.com/terraform/cli/config/config-file#development-overrides-for-provider-developers
+
+## Authentication
+
+The provider supports three auth modes. Configure exactly one.
+
+### Client-pair (default — works against any OpenPanel install)
+
+Mint a root-typed Client through the OpenPanel dashboard (or via the
+[openpanel-chart][chart] Helm bootstrap Job, which writes the
+credential to a chart-managed `openpanel-bootstrap-root` Secret at
+install time).
+
+```hcl
+provider "openpanel" {
+  host          = "https://analytics.example.com"
+  client_id     = var.openpanel_client_id
+  client_secret = var.openpanel_client_secret
+}
+```
+
+Environment fallback: `OPENPANEL_HOST`, `OPENPANEL_CLIENT_ID`,
+`OPENPANEL_CLIENT_SECRET`.
+
+[chart]: https://github.com/hops-ops/openpanel-chart
+
+### OIDC `client_credentials` (fork-only)
+
+Lets the provider authenticate via your platform IdP (Zitadel, Okta,
+etc.) instead of a long-lived shared secret. Requires the hops-ops
+fork's `ADMIN_OIDC_ISSUER` configuration.
+
+```hcl
+provider "openpanel" {
+  host = "https://analytics.example.com"
+
+  oidc {
+    issuer        = "https://auth.example.com"
+    client_id     = var.oidc_client_id
+    client_secret = var.oidc_client_secret
+    audience      = "openpanel-admin"
+  }
+}
+```
+
+The provider runs the `client_credentials` grant against
+`<issuer>/.well-known/openid-configuration`, caches the JWT, and
+refreshes ~60s before expiry.
+
+### Static Bearer
+
+When some external tool already issues a JWT:
+
+```hcl
+provider "openpanel" {
+  host  = "https://analytics.example.com"
+  token = var.openpanel_token
+}
+```
+
+## Resources
+
+### `openpanel_organization`
+
+Top-level tenant primitive; scopes Projects, Clients, References,
+Members.
+
+```hcl
+resource "openpanel_organization" "acme" {
+  name     = "Acme"
+  timezone = "America/Chicago"
+}
+```
+
+### `openpanel_project`
+
+```hcl
+resource "openpanel_project" "marketing_site" {
+  name   = "Marketing site"
+  domain = "example.com"
+  cors   = "https://example.com https://www.example.com"
+}
+```
+
+### `openpanel_client`
+
+Per-environment ingest credentials. Use Client `type = "write"` for
+SDKs; `type = "root"` for management API access.
+
+```hcl
+resource "openpanel_client" "marketing_site_web" {
+  name       = "Marketing site web"
+  type       = "write"
+  project_id = openpanel_project.marketing_site.id
+  cors       = "https://example.com"
+}
+
+output "marketing_site_client_id" {
+  value = openpanel_client.marketing_site_web.id
+}
+
+output "marketing_site_client_secret" {
+  value     = openpanel_client.marketing_site_web.secret
+  sensitive = true
+}
+```
+
+### `openpanel_reference`
+
+Free-form metadata for slicing analytics (release tags, deploys,
+feature flags, etc.).
+
+```hcl
+resource "openpanel_reference" "release_v1_2_0" {
+  project_id = openpanel_project.marketing_site.id
+  name       = "v1.2.0"
+  date       = "2026-05-18T00:00:00Z"
+  description = "Marketing-site relaunch"
+}
+```
+
+## Full reference
+
+Per-resource attribute documentation lives under [`docs/`](./docs/);
+the Terraform Registry surfaces the same content rendered with
+examples.
+
+## Development
+
+### Requirements
+
+- Go ≥ 1.24
+- Terraform ≥ 1.13
+
+### Build & generate
 
 ```shell
 go install
+make generate    # regenerates docs/ from the provider schema
 ```
 
-## Adding Dependencies
-
-This provider uses [Go modules](https://github.com/golang/go/wiki/Modules).
-Please see the Go documentation for the most up to date information about using Go modules.
-
-To add a new dependency `github.com/author/dependency` to your Terraform provider:
+### Tests
 
 ```shell
-go get github.com/author/dependency
-go mod tidy
+make test     # unit
+make testacc  # acceptance (creates real resources against a real OpenPanel; needs OPENPANEL_HOST etc.)
 ```
 
-Then commit the changes to `go.mod` and `go.sum`.
+### Release
 
-## Using the Provider
+Releases are driven by [vnext][vnext] from conventional commits on
+`main`. Pushing a `feat:` / `fix:` commit to main:
 
-Fill this in for each provider
+1. CI runs build + lint + docs-up-to-date checks.
+2. `vnext` calculates the next semver and pushes a tag.
+3. The `on-version-tagged` workflow runs goreleaser, signs the
+   binaries with the repo's GPG key, and publishes them as a GitHub
+   Release. The Terraform Registry picks the release up automatically.
 
-## Developing the Provider
+[vnext]: https://github.com/unbounded-tech/vnext
 
-If you wish to work on the provider, you'll first need [Go](http://www.golang.org) installed on your machine (see [Requirements](#requirements) above).
+## Related repos
 
-To compile the provider, run `go install`. This will build the provider and put the provider binary in the `$GOPATH/bin` directory.
+| Repo | Purpose |
+|---|---|
+| [`hops-ops/openpanel-app`](https://github.com/hops-ops/openpanel-app) | OpenPanel fork with admin-JWT auth + `/manage/organizations` endpoints |
+| [`hops-ops/openpanel-chart`](https://github.com/hops-ops/openpanel-chart) | Helm chart with per-concern Secrets + root-Client bootstrap Job |
+| [`hops-ops/analytics-stack`](https://github.com/hops-ops/analytics-stack) | Crossplane composition that runs the chart + publishes the bootstrap credential to AWS Secrets Manager |
+| [`hops-ops/provider-upjet-openpanel`](https://github.com/hops-ops/provider-upjet-openpanel) | Crossplane provider generated from this Terraform provider via upjet |
 
-To generate or update documentation, run `make generate`.
+## License
 
-In order to run the full suite of Acceptance tests, run `make testacc`.
-
-*Note:* Acceptance tests create real resources, and often cost money to run.
-
-```shell
-make testacc
-```
+MPL-2.0
