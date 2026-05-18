@@ -25,27 +25,35 @@ const (
 	managePrefix   = "/api/manage"
 )
 
-// Client is the OpenPanel /manage REST client.
+// Client is the OpenPanel /manage REST client. Authentication is
+// pluggable via Authorizer — see auth.go for the three supported
+// auth modes (Client-pair headers, OIDC client_credentials, static
+// Bearer).
 type Client struct {
-	host         string
-	clientID     string
-	clientSecret string
-	userAgent    string
-	http         *http.Client
+	host      string
+	auth      Authorizer
+	userAgent string
+	http      *http.Client
 }
 
 // New constructs a Client. host is the base URL of the OpenPanel API
 // (e.g. https://analytics.example.com); the client appends
 // /api/manage/* to each request.
-func New(host, clientID, clientSecret, providerVersion string) *Client {
+func New(host string, auth Authorizer, providerVersion string) *Client {
+	httpClient := &http.Client{
+		Timeout: defaultTimeout,
+	}
+	// OIDC authorizer needs an http.Client for its discovery + token
+	// fetch. Share the same client so token-endpoint calls use the
+	// provider's timeout settings.
+	if oidc, ok := auth.(*OIDCClientCredentialsAuth); ok && oidc.http == nil {
+		oidc.http = httpClient
+	}
 	return &Client{
-		host:         strings.TrimRight(host, "/"),
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		userAgent:    fmt.Sprintf("terraform-provider-openpanel/%s", providerVersion),
-		http: &http.Client{
-			Timeout: defaultTimeout,
-		},
+		host:      strings.TrimRight(host, "/"),
+		auth:      auth,
+		userAgent: fmt.Sprintf("terraform-provider-openpanel/%s", providerVersion),
+		http:      httpClient,
 	}
 }
 
@@ -92,8 +100,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("openpanel-client-id", c.clientID)
-	req.Header.Set("openpanel-client-secret", c.clientSecret)
+	if err := c.auth.Authorize(ctx, req); err != nil {
+		return fmt.Errorf("authorize request: %w", err)
+	}
 	req.Header.Set("user-agent", c.userAgent)
 	if body != nil {
 		req.Header.Set("content-type", "application/json")
